@@ -101,18 +101,19 @@ def _normalize_messages(
     return normalized
 
 
-def _build_openai_request(
+def _build_chat_completions_request(
     base_url: str,
     api_key: str,
     model: str,
     messages: list[LLMMessage],
     max_tokens: int,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """Build URL, headers, and JSON body for OpenAI-compatible Chat Completions."""
+    """Build URL, headers, and JSON body for Mistral / OpenAI-compatible Chat Completions."""
     url = f"{base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "Accept": "application/json",
     }
     payload: dict[str, Any] = {
         "model": model,
@@ -122,8 +123,27 @@ def _build_openai_request(
     return url, headers, payload
 
 
-def _parse_openai_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]:
-    """Extract generated text and normalized token usage from an OpenAI response."""
+def _extract_chat_message_text(content: Any) -> str:
+    """Extract assistant text from either a plain string or Mistral content chunk list."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = [
+            chunk["text"]
+            for chunk in content
+            if isinstance(chunk, dict)
+            and chunk.get("type") == "text"
+            and isinstance(chunk.get("text"), str)
+        ]
+        if text_parts:
+            return "".join(text_parts)
+    raise LLMResponseParseError(
+        "Provider response is missing valid text in 'choices[0].message.content'."
+    )
+
+
+def _parse_chat_completions_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]:
+    """Extract generated text and normalized token usage from a Chat Completions response."""
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         raise LLMResponseParseError("Provider response is missing a non-empty 'choices' list.")
@@ -133,12 +153,14 @@ def _parse_openai_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]:
         raise LLMResponseParseError("Provider response 'choices[0]' must be an object.")
 
     message = first_choice.get("message")
-    if not isinstance(message, dict) or not isinstance(message.get("content"), str):
-        raise LLMResponseParseError("Provider response is missing string 'choices[0].message.content'.")
+    if not isinstance(message, dict):
+        raise LLMResponseParseError("Provider response is missing 'choices[0].message' object.")
+
+    text = _extract_chat_message_text(message.get("content"))
 
     usage_raw = payload.get("usage")
     if not isinstance(usage_raw, dict):
-        return message["content"], TokenUsage()
+        return text, TokenUsage()
 
     input_tokens = _as_optional_int(usage_raw.get("prompt_tokens"))
     output_tokens = _as_optional_int(usage_raw.get("completion_tokens"))
@@ -146,7 +168,7 @@ def _parse_openai_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]:
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
 
-    return message["content"], TokenUsage(
+    return text, TokenUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
@@ -223,9 +245,13 @@ def _parse_anthropic_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]
 
 
 _PROVIDERS: dict[str, _ProviderSpec] = {
+    "mistral": _ProviderSpec(
+        build_request=_build_chat_completions_request,
+        parse_response=_parse_chat_completions_response,
+    ),
     "openai": _ProviderSpec(
-        build_request=_build_openai_request,
-        parse_response=_parse_openai_response,
+        build_request=_build_chat_completions_request,
+        parse_response=_parse_chat_completions_response,
     ),
     "anthropic": _ProviderSpec(
         build_request=_build_anthropic_request,
@@ -256,6 +282,8 @@ def _extract_error_detail(response: httpx.Response, secret: str) -> str:
                 detail = err
             elif "message" in data:
                 detail = str(data["message"])
+            elif "detail" in data:
+                detail = str(data["detail"])
     except ValueError:
         detail = response.text.strip()
 
@@ -390,7 +418,7 @@ class LLMClient:
         )
         if not api_key:
             raise LLMConfigurationError(
-                "LLM API key is missing. Set LLM_API_KEY in the environment or settings."
+                "LLM API key is missing. Set MISTRAL_API_KEY or LLM_API_KEY in the environment or settings."
             )
 
         provider = self.settings.llm_provider

@@ -1,6 +1,6 @@
-# JobFit Core — Handwritten LLM Client
+# JobFit Core — Handwritten LLM Client (Mistral AI)
 
-A lightweight, reusable asynchronous Python HTTP client for calling LLM APIs (`openai`-compatible Chat Completions and `anthropic` Messages) without framework magic. Built directly on `httpx.AsyncClient`, `pydantic`, and `pydantic-settings` so HTTP transport, timeouts, retries, logging, token accounting, and cost estimation are transparent and easy to reason about.
+A lightweight, reusable asynchronous Python HTTP client configured for **Mistral AI** (`https://api.mistral.ai/v1/chat/completions`) without framework magic. Built directly on `httpx.AsyncClient`, `pydantic`, and `pydantic-settings` so HTTP transport, timeouts, retries, logging, token accounting, and cost estimation are transparent and easy to reason about. Provider request/response formatting is isolated via `_PROVIDERS` (supporting `mistral` by default, as well as `openai` and `anthropic`).
 
 ## Why This Exists
 
@@ -16,7 +16,7 @@ JobFit Project/
 │   │   └── llm_client.py      # Async HTTP client, retries, backoff, logging, cost math
 │   ├── config/
 │   │   ├── __init__.py
-│   │   └── settings.py        # Env settings, timeouts, retry limits, model pricing
+│   │   └── settings.py        # Env settings (MISTRAL_API_KEY/LLM_API_KEY), timeouts, pricing
 │   └── schemas/
 │       ├── __init__.py
 │       └── llm.py             # LLMMessage, TokenUsage, ModelPricing, LLMResponse
@@ -47,7 +47,7 @@ pip install -e ".[dev]"
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set LLM_API_KEY
+# Edit .env and set MISTRAL_API_KEY (or LLM_API_KEY)
 ```
 
 ## Usage
@@ -65,7 +65,7 @@ async def main() -> None:
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Summarize why retries need jitter."},
         ],
-        model="gpt-4o-mini",
+        model="mistral-small-latest",
         max_tokens=256,
     )
     print(response.text)
@@ -83,8 +83,8 @@ Every successful call returns an `LLMResponse` Pydantic model (`app/schemas/llm.
 | Field | Type | Description |
 | --- | --- | --- |
 | `text` | `str` | Generated assistant text |
-| `model` | `str` | Model name used for the request |
-| `provider` | `str` | Active provider (`"openai"` or `"anthropic"`) |
+| `model` | `str` | Model name used for the request (e.g. `mistral-small-latest`) |
+| `provider` | `str` | Active provider (`"mistral"` by default, or `"openai"` / `"anthropic"`) |
 | `input_tokens` | `int \| None` | Prompt/input token count |
 | `output_tokens` | `int \| None` | Completion/output token count |
 | `total_tokens` | `int \| None` | Total tokens (provider-supplied or `input + output`) |
@@ -107,7 +107,7 @@ Every successful call returns an `LLMResponse` Pydantic model (`app/schemas/llm.
 - **Fail-fast (permanent errors — never retried):**
   - HTTP `400` (bad request), `401` (unauthorized), `403`, `404`, `422`, and any other non-retryable status code immediately raise `LLMPermanentError`.
   - Malformed JSON or unexpected provider payloads raise `LLMResponseParseError`.
-  - Missing `LLM_API_KEY` or empty messages raise `LLMConfigurationError` before any network call.
+  - Missing `MISTRAL_API_KEY` / `LLM_API_KEY` or empty messages raise `LLMConfigurationError` before any network call.
 
 ### Backoff Schedule, Jitter, and `Retry-After`
 
@@ -133,7 +133,7 @@ When `complete()` manages its own `httpx.AsyncClient`, it uses `async with httpx
 
 ## Token Usage and Cost Estimation
 
-Token counts are normalized across providers (`prompt_tokens`/`completion_tokens` for OpenAI; `input_tokens`/`output_tokens` for Anthropic). Estimated cost is calculated from centralized pricing in `DEFAULT_MODEL_PRICING` (`app/config/settings.py`):
+Mistral AI returns `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`. Estimated cost is calculated from centralized pricing in `DEFAULT_MODEL_PRICING` (`app/config/settings.py`) for `mistral-small-latest`, `mistral-large-latest`, `codestral-latest`, and `ministral-*-latest`:
 
 ```text
 estimated_cost =

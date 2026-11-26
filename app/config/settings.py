@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.schemas.llm import ModelPricing
@@ -12,6 +12,42 @@ from app.schemas.llm import ModelPricing
 # Centralized model pricing table (USD per 1M tokens).
 # Update `last_updated` and rates when provider pricing changes.
 DEFAULT_MODEL_PRICING: dict[str, ModelPricing] = {
+    "mistral-small-latest": ModelPricing(
+        input_price_per_million=0.15,
+        output_price_per_million=0.60,
+        source="Mistral AI Pricing (https://mistral.ai/pricing)",
+        last_updated="2026-11-01",
+    ),
+    "mistral-large-latest": ModelPricing(
+        input_price_per_million=0.70,
+        output_price_per_million=2.10,
+        source="Mistral AI Pricing (https://mistral.ai/pricing)",
+        last_updated="2026-11-01",
+    ),
+    "codestral-latest": ModelPricing(
+        input_price_per_million=0.30,
+        output_price_per_million=0.90,
+        source="Mistral AI Pricing (https://mistral.ai/pricing)",
+        last_updated="2026-11-01",
+    ),
+    "ministral-3b-latest": ModelPricing(
+        input_price_per_million=0.10,
+        output_price_per_million=0.10,
+        source="Mistral AI Pricing (https://mistral.ai/pricing)",
+        last_updated="2026-11-01",
+    ),
+    "ministral-8b-latest": ModelPricing(
+        input_price_per_million=0.15,
+        output_price_per_million=0.15,
+        source="Mistral AI Pricing (https://mistral.ai/pricing)",
+        last_updated="2026-11-01",
+    ),
+    "ministral-14b-latest": ModelPricing(
+        input_price_per_million=0.20,
+        output_price_per_million=0.20,
+        source="Mistral AI Pricing (https://mistral.ai/pricing)",
+        last_updated="2026-11-01",
+    ),
     "gpt-4o-mini": ModelPricing(
         input_price_per_million=0.15,
         output_price_per_million=0.60,
@@ -57,6 +93,7 @@ DEFAULT_MODEL_PRICING: dict[str, ModelPricing] = {
 }
 
 DEFAULT_PROVIDER_BASE_URLS: dict[str, str] = {
+    "mistral": "https://api.mistral.ai/v1",
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
 }
@@ -71,10 +108,13 @@ class LLMSettings(BaseSettings):
         extra="ignore",
     )
 
-    llm_provider: Literal["openai", "anthropic"] = "openai"
-    llm_api_key: SecretStr | None = None
+    llm_provider: Literal["mistral", "openai", "anthropic"] = "mistral"
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("llm_api_key", "LLM_API_KEY", "MISTRAL_API_KEY"),
+    )
     llm_base_url: str | None = None
-    llm_default_model: str = "gpt-4o-mini"
+    llm_default_model: str = "mistral-small-latest"
     llm_default_max_tokens: int = Field(default=1024, gt=0)
 
     # Explicit HTTP timeouts (seconds)
