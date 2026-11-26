@@ -1,6 +1,6 @@
-# JobFit Core — Handwritten LLM Client (Mistral AI)
+# JobFit Core — Handwritten LLM Client (Google Gemini)
 
-A lightweight, reusable asynchronous Python HTTP client configured for **Mistral AI** (`https://api.mistral.ai/v1/chat/completions`) without framework magic. Built directly on `httpx.AsyncClient`, `pydantic`, and `pydantic-settings` so HTTP transport, timeouts, retries, logging, token accounting, and cost estimation are transparent and easy to reason about. Provider request/response formatting is isolated via `_PROVIDERS` (supporting `mistral` by default, as well as `openai` and `anthropic`).
+A lightweight, reusable asynchronous Python HTTP client configured for **Google Gemini** (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`) without framework magic. Built directly on `httpx.AsyncClient`, `pydantic`, and `pydantic-settings` so HTTP transport, timeouts, retries, logging, token accounting, and cost estimation are transparent and easy to reason about. Provider request/response formatting is isolated via `_PROVIDERS` (supporting `gemini` by default, as well as `openai` and `anthropic`).
 
 ## Why This Exists
 
@@ -16,7 +16,7 @@ JobFit Project/
 │   │   └── llm_client.py      # Async HTTP client, retries, backoff, logging, cost math
 │   ├── config/
 │   │   ├── __init__.py
-│   │   └── settings.py        # Env settings (MISTRAL_API_KEY/LLM_API_KEY), timeouts, pricing
+│   │   └── settings.py        # Env settings (GEMINI_API_KEY/LLM_API_KEY), timeouts, pricing
 │   └── schemas/
 │       ├── __init__.py
 │       └── llm.py             # LLMMessage, TokenUsage, ModelPricing, LLMResponse
@@ -47,7 +47,7 @@ pip install -e ".[dev]"
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set MISTRAL_API_KEY (or LLM_API_KEY)
+# Edit .env and set GEMINI_API_KEY (or GOOGLE_API_KEY / LLM_API_KEY)
 ```
 
 ## Usage
@@ -65,7 +65,7 @@ async def main() -> None:
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Summarize why retries need jitter."},
         ],
-        model="mistral-small-latest",
+        model="gemini-2.5-flash",
         max_tokens=256,
     )
     print(response.text)
@@ -76,6 +76,12 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Or run the built-in module demo directly:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.clients.llm_client
+```
+
 ## Normalized `LLMResponse` Shape
 
 Every successful call returns an `LLMResponse` Pydantic model (`app/schemas/llm.py`):
@@ -83,10 +89,10 @@ Every successful call returns an `LLMResponse` Pydantic model (`app/schemas/llm.
 | Field | Type | Description |
 | --- | --- | --- |
 | `text` | `str` | Generated assistant text |
-| `model` | `str` | Model name used for the request (e.g. `mistral-small-latest`) |
-| `provider` | `str` | Active provider (`"mistral"` by default, or `"openai"` / `"anthropic"`) |
+| `model` | `str` | Model name used for the request (e.g. `gemini-2.5-flash`) |
+| `provider` | `str` | Active provider (`"gemini"` by default, or `"openai"` / `"anthropic"`) |
 | `input_tokens` | `int \| None` | Prompt/input token count |
-| `output_tokens` | `int \| None` | Completion/output token count |
+| `output_tokens` | `int \| None` | Output token count (including Gemini `thoughtsTokenCount` when present) |
 | `total_tokens` | `int \| None` | Total tokens (provider-supplied or `input + output`) |
 | `estimated_cost` | `float \| None` | Estimated USD cost, or `None` if unavailable |
 | `currency` | `str` | Always `"USD"` |
@@ -107,7 +113,7 @@ Every successful call returns an `LLMResponse` Pydantic model (`app/schemas/llm.
 - **Fail-fast (permanent errors — never retried):**
   - HTTP `400` (bad request), `401` (unauthorized), `403`, `404`, `422`, and any other non-retryable status code immediately raise `LLMPermanentError`.
   - Malformed JSON or unexpected provider payloads raise `LLMResponseParseError`.
-  - Missing `MISTRAL_API_KEY` / `LLM_API_KEY` or empty messages raise `LLMConfigurationError` before any network call.
+  - Missing `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `LLM_API_KEY` or empty messages raise `LLMConfigurationError` before any network call.
 
 ### Backoff Schedule, Jitter, and `Retry-After`
 
@@ -133,7 +139,7 @@ When `complete()` manages its own `httpx.AsyncClient`, it uses `async with httpx
 
 ## Token Usage and Cost Estimation
 
-Mistral AI returns `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`. Estimated cost is calculated from centralized pricing in `DEFAULT_MODEL_PRICING` (`app/config/settings.py`) for `mistral-small-latest`, `mistral-large-latest`, `codestral-latest`, and `ministral-*-latest`:
+Gemini returns `usageMetadata.promptTokenCount`, `candidatesTokenCount` (plus `thoughtsTokenCount` on thinking models), and `totalTokenCount`. Estimated cost is calculated from centralized pricing in `DEFAULT_MODEL_PRICING` (`app/config/settings.py`) for `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`, and `gemini-2.0-flash`:
 
 ```text
 estimated_cost =
@@ -145,7 +151,7 @@ If either token usage or model pricing is missing, `estimated_cost` is explicitl
 
 ## Security & Logging
 
-Each attempt logs `model`, `attempt`, `status` (when available), `latency_ms`, and retry `delay_s`/`reason`. API keys (`SecretStr`), `Authorization`/`x-api-key` headers, and prompt message contents are never logged, and provider error messages are scrubbed before raising.
+The Gemini API key is sent via the `x-goog-api-key` header (not in the URL query string). Each attempt logs `model`, `attempt`, `status` (when available), `latency_ms`, and retry `delay_s`/`reason`. API keys (`SecretStr`), auth headers, and prompt message contents are never logged, and provider error messages are scrubbed before raising.
 
 ## Running Tests
 

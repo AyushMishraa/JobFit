@@ -101,6 +101,95 @@ def _normalize_messages(
     return normalized
 
 
+def _build_gemini_request(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[LLMMessage],
+    max_tokens: int,
+) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """Build URL, headers, and JSON body for the Google Gemini ``generateContent`` API."""
+    url = f"{base_url}/models/{model}:generateContent"
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    system_parts = [m.content for m in messages if m.role == "system"]
+    contents = [
+        {
+            "role": "model" if m.role == "assistant" else "user",
+            "parts": [{"text": m.content}],
+        }
+        for m in messages
+        if m.role != "system"
+    ]
+    if not contents:
+        raise LLMConfigurationError(
+            "Gemini requests require at least one non-system message."
+        )
+
+    payload: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    }
+    if system_parts:
+        payload["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_parts)}]}
+    return url, headers, payload
+
+
+def _parse_gemini_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]:
+    """Extract generated text and normalized token usage from a Gemini response."""
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise LLMResponseParseError("Provider response is missing a non-empty 'candidates' list.")
+
+    first_candidate = candidates[0]
+    if not isinstance(first_candidate, dict):
+        raise LLMResponseParseError("Provider response 'candidates[0]' must be an object.")
+
+    content = first_candidate.get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list) or not parts:
+        raise LLMResponseParseError(
+            "Provider response is missing non-empty 'candidates[0].content.parts'."
+        )
+
+    text_parts = [
+        part["text"]
+        for part in parts
+        if isinstance(part, dict)
+        and isinstance(part.get("text"), str)
+        and not part.get("thought")
+    ]
+    if not text_parts:
+        raise LLMResponseParseError(
+            "Provider response 'candidates[0].content.parts' contained no output text."
+        )
+
+    usage_raw = payload.get("usageMetadata")
+    if not isinstance(usage_raw, dict):
+        return "".join(text_parts), TokenUsage()
+
+    input_tokens = _as_optional_int(usage_raw.get("promptTokenCount"))
+    candidates_tokens = _as_optional_int(usage_raw.get("candidatesTokenCount"))
+    thoughts_tokens = _as_optional_int(usage_raw.get("thoughtsTokenCount"))
+    output_tokens = (
+        candidates_tokens + (thoughts_tokens or 0)
+        if candidates_tokens is not None
+        else None
+    )
+    total_tokens = _as_optional_int(usage_raw.get("totalTokenCount"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    return "".join(text_parts), TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
+
+
 def _build_chat_completions_request(
     base_url: str,
     api_key: str,
@@ -108,7 +197,7 @@ def _build_chat_completions_request(
     messages: list[LLMMessage],
     max_tokens: int,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """Build URL, headers, and JSON body for Mistral / OpenAI-compatible Chat Completions."""
+    """Build URL, headers, and JSON body for OpenAI-compatible Chat Completions."""
     url = f"{base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -245,9 +334,9 @@ def _parse_anthropic_response(payload: dict[str, Any]) -> tuple[str, TokenUsage]
 
 
 _PROVIDERS: dict[str, _ProviderSpec] = {
-    "mistral": _ProviderSpec(
-        build_request=_build_chat_completions_request,
-        parse_response=_parse_chat_completions_response,
+    "gemini": _ProviderSpec(
+        build_request=_build_gemini_request,
+        parse_response=_parse_gemini_response,
     ),
     "openai": _ProviderSpec(
         build_request=_build_chat_completions_request,
@@ -418,7 +507,7 @@ class LLMClient:
         )
         if not api_key:
             raise LLMConfigurationError(
-                "LLM API key is missing. Set MISTRAL_API_KEY or LLM_API_KEY in the environment or settings."
+                "LLM API key is missing. Set GEMINI_API_KEY or LLM_API_KEY in the environment or settings."
             )
 
         provider = self.settings.llm_provider
@@ -713,3 +802,21 @@ async def complete(
     """Send an async completion request through :class:`LLMClient` and normalize the output."""
     client = LLMClient(settings=settings, http_client=http_client, sleep_fn=sleep_fn)
     return await client.complete(messages=messages, model=model, max_tokens=max_tokens)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+    async def _main() -> None:
+        response = await complete(
+            messages=[
+                {"role": "system", "content": "You are a concise assistant."},
+                {"role": "user", "content": "Say hello and explain retries with jitter in one sentence."},
+            ]
+        )
+        print(response.model_dump_json(indent=2))
+
+    asyncio.run(_main())

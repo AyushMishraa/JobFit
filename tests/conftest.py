@@ -18,13 +18,13 @@ def sample_messages() -> list[dict[str, str]]:
 
 
 @pytest.fixture
-def mistral_settings() -> LLMSettings:
-    """Deterministic Mistral AI settings for unit tests."""
+def gemini_settings() -> LLMSettings:
+    """Deterministic Google Gemini settings for unit tests."""
     return LLMSettings(
-        llm_provider="mistral",
-        llm_api_key=SecretStr("mistral-test-secret-key-12345"),
-        llm_base_url="https://api.mistral.ai/v1",
-        llm_default_model="mistral-small-latest",
+        llm_provider="gemini",
+        llm_api_key=SecretStr("AIzaSyTestSecretKey12345"),
+        llm_base_url="https://generativelanguage.googleapis.com/v1beta",
+        llm_default_model="gemini-2.5-flash",
         llm_default_max_tokens=256,
         llm_connect_timeout=5.0,
         llm_read_timeout=30.0,
